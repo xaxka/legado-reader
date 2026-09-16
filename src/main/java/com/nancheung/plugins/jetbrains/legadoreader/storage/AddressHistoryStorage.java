@@ -153,6 +153,20 @@ public final class AddressHistoryStorage implements PersistentStateComponent<Add
     }
 
     /**
+     * 从历史记录中删除指定的服务器地址（用于清理失效服务器）
+     *
+     * @param address 待删除的地址（会先规范化；地址栏的"离线"虚拟选项不在此存储中，不受影响）
+     * @return true 删除成功；false 地址为空或历史中不存在
+     */
+    public boolean removeAddress(String address) {
+        String normalized = normalizeAddress(address);
+        if (normalized == null || normalized.isEmpty()) {
+            return false;
+        }
+        return getState().items.removeIf(item -> normalizeAddress(item.address).equals(normalized));
+    }
+
+    /**
      * 获取地址列表（按时间倒序）
      *
      * @return 地址列表

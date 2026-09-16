@@ -18,10 +18,11 @@ import java.util.function.Supplier;
 
 /**
  * 地址栏面板组件（通用）
- * 负责管理服务器下拉框、添加按钮、刷新按钮和异步加载逻辑
+ * 负责管理服务器下拉框、添加按钮、删除按钮、刷新按钮和异步加载逻辑
  * <p>
  * 下拉框第一项固定为 {@link #OFFLINE_CACHE_OPTION}（离线），
- * 选择该项时调用 onOfflineMode 回调而非 loadAction。
+ * 选择该项时调用 onOfflineMode 回调而非 loadAction；
+ * 删除按钮用于移除选中的服务器地址（"离线"虚拟选项除外）。
  *
  * @param <T> 加载结果的数据类型
  * @author NanCheung
@@ -37,6 +38,7 @@ public class AddressBarPanel<T> extends JBPanel<AddressBarPanel<T>> {
     // ==================== UI 组件 ====================
     private ComboBox<String> addressHistoryBox;
     private JButton addButton;
+    private JButton deleteButton;
     private JButton refreshButton;
 
     // ==================== 数据模型 ====================
@@ -92,6 +94,13 @@ public class AddressBarPanel<T> extends JBPanel<AddressBarPanel<T>> {
         addButton.setToolTipText("添加新的阅读服务器地址（不带端口自动补 1122）");
         applyTransparentButtonStyle(addButton);
 
+        // 删除按钮：删除下拉框中选中的服务器地址（"离线"虚拟选项除外，选中离线时置灰）
+        deleteButton = new JButton("删除");
+        deleteButton.setName("deleteButton");
+        deleteButton.setToolTipText("删除下拉框中选中的服务器地址（用于清理失效服务器；\"离线\"选项不可删除）");
+        applyTransparentButtonStyle(deleteButton);
+        deleteButton.setEnabled(false);
+
         // 刷新按钮（此前误将文案改成"透明"二字；现恢复文案"刷新"，按钮本体改为透明样式）
         refreshButton = new JButton("刷新");
         refreshButton.setName("refreshButton");
@@ -100,6 +109,8 @@ public class AddressBarPanel<T> extends JBPanel<AddressBarPanel<T>> {
         add(addressHistoryBox);
         add(Box.createHorizontalStrut(JBUI.scale(4)));
         add(addButton);
+        add(Box.createHorizontalStrut(JBUI.scale(4)));
+        add(deleteButton);
         add(Box.createHorizontalStrut(JBUI.scale(4)));
         add(refreshButton);
     }
@@ -119,11 +130,15 @@ public class AddressBarPanel<T> extends JBPanel<AddressBarPanel<T>> {
     private void bindEventListeners() {
         refreshButton.addActionListener(e -> load());
         addButton.addActionListener(e -> addServer());
+        deleteButton.addActionListener(e -> deleteServer());
 
-        // 下拉框选择切换：自动加载（程序设置时抑制）
+        // 下拉框选择切换：自动加载（程序设置时抑制），并同步删除按钮可用状态
         addressHistoryBox.addItemListener(e -> {
-            if (e.getStateChange() == ItemEvent.SELECTED && e.getItem() != null && !suppressAutoLoad) {
-                load();
+            if (e.getStateChange() == ItemEvent.SELECTED && e.getItem() != null) {
+                updateDeleteButtonState();
+                if (!suppressAutoLoad) {
+                    load();
+                }
             }
         });
     }
@@ -155,6 +170,58 @@ public class AddressBarPanel<T> extends JBPanel<AddressBarPanel<T>> {
         suppressAutoLoad = false;
 
         load();
+    }
+
+    /**
+     * 删除下拉框中选中的服务器地址
+     * <p>
+     * "离线"为内置虚拟选项，不对应真实服务器地址，不可删除；
+     * 删除后自动切换到剩余最近使用的服务器（无剩余服务器则切到"离线"）并重新加载。
+     */
+    private void deleteServer() {
+        String selected = (String) addressHistoryBox.getSelectedItem();
+        if (selected == null || selected.trim().isEmpty()) {
+            return;
+        }
+
+        // "离线"是内置虚拟选项，禁止删除
+        if (OFFLINE_CACHE_OPTION.equals(selected)) {
+            JOptionPane.showMessageDialog(
+                    SwingUtilities.getWindowAncestor(this),
+                    "「" + OFFLINE_CACHE_OPTION + "」为内置虚拟选项，不可删除。",
+                    "删除服务器",
+                    JOptionPane.INFORMATION_MESSAGE
+            );
+            return;
+        }
+
+        boolean removed = AddressHistoryStorage.getInstance().removeAddress(selected);
+        if (!removed) {
+            log.debug("地址不在历史记录中，跳过删除：{}", selected);
+            return;
+        }
+
+        // 刷新下拉框并切换到剩余最近使用的服务器（无剩余则保持"离线"）
+        refreshHistory();
+        String next = AddressHistoryStorage.getInstance().getMostRecent();
+        if (next != null) {
+            suppressAutoLoad = true;
+            addressHistoryBox.setSelectedItem(next);
+            suppressAutoLoad = false;
+        }
+
+        load();
+    }
+
+    /**
+     * 同步删除按钮可用状态：
+     * 仅当选中的是真实服务器地址时可用（"离线"虚拟选项与空选中不可删除）
+     */
+    private void updateDeleteButtonState() {
+        String selected = (String) addressHistoryBox.getSelectedItem();
+        boolean deletable = selected != null && !selected.trim().isEmpty()
+                && !OFFLINE_CACHE_OPTION.equals(selected);
+        deleteButton.setEnabled(deletable);
     }
 
     /**
@@ -237,6 +304,8 @@ public class AddressBarPanel<T> extends JBPanel<AddressBarPanel<T>> {
             }
         } finally {
             suppressAutoLoad = false;
+            // 模型重建后选中项可能变化，同步删除按钮可用状态
+            updateDeleteButtonState();
         }
     }
 }
