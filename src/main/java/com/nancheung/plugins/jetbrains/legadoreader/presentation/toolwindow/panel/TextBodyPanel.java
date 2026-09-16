@@ -291,7 +291,15 @@ public class TextBodyPanel extends JBPanel<TextBodyPanel> {
 
     /**
      * 向下翻一页（按视口高度逐行计算）
-     * 新视口顶部 = 当前视口最后一个完整可见行的下一行行首
+     * <p>
+     * 新视口顶部 = 当前视口底部第一行"文字未完整显示"的行首，判定规则（减去行间隙）：
+     * <ul>
+     *   <li>行矩形（modelToView2D 只覆盖文字高度，不含行间隙）底部超出视口底部：
+     *       文字只显示了一部分（如 20%）或完全不可见——文字必须显示全才能被翻过去，
+     *       该行整体带到下一页，作为新视口顶部行；</li>
+     *   <li>行矩形底部在视口内（被截断的至多是行间隙）：
+     *       文字已完整显示，该行可以翻过去，新视口从下一行开始（零重叠）。</li>
+     * </ul>
      * 保证至少推进一行，避免原地不动
      *
      * @return 跳转后的行首字符偏移；已到底则返回 -1
@@ -307,29 +315,38 @@ public class TextBodyPanel extends JBPanel<TextBodyPanel> {
             int totalLen = textBodyPane.getDocument().getLength();
             if (totalLen == 0) return -1;
 
-            // 找到 viewBottom 对应的字符，确定"完全不可见的下一行"
+            // 找到 viewBottom 对应的行，rect 为该行的文字矩形（不含行间隙）
             int pos = findPositionAtY(viewBottom);
             Rectangle rect = textBodyPane.modelToView2D(pos).getBounds();
             if (rect == null) return -1;
 
+            int lineStart = findLineStart(pos);
             int newTop;
-            if (rect.y >= viewBottom) {
-                // 该行行首已在视口底部之下（完全不可见），作为新视口顶部
-                newTop = findLineStart(pos);
-            } else {
-                // 该行部分可见，新视口从它的下一行开始（零重叠）
-                int lineStart = findLineStart(pos);
+            if (rect.y + rect.height <= viewBottom) {
+                // 该行文字已完整显示（被截断的至多是行间隙）→ 该行可以翻过去，
+                // 新视口从下一行开始（零重叠）
                 newTop = findNextLineStartAfter(lineStart, totalLen);
+            } else {
+                // 该行文字未完整显示（部分可见，如只显示 20%，或行首已在视口底部之下）：
+                // 文字必须显示全才能翻过去 → 该行整体作为新视口顶部行
+                newTop = lineStart;
             }
 
             // newTop 已超出文档末尾 → 到底
             if (newTop >= totalLen) return -1;
 
-            // 关键：newTop 所在行必须在当前视口中完全不可见
-            // 如果可见（剩余内容不足一页），不滚动，返回 -1 触发下一章
+            // 关键：newTop 所在行的文字必须在当前视口中未完整显示，
+            // 如果已完整显示（剩余内容不足一页），不滚动，返回 -1 触发下一章
             Rectangle newTopRect = textBodyPane.modelToView2D(newTop).getBounds();
-            if (newTopRect == null || newTopRect.y < viewBottom) {
+            if (newTopRect == null || newTopRect.y + newTopRect.height <= viewBottom) {
                 return -1;
+            }
+
+            // 保证视口向下推进：新视口顶部必须低于当前顶部，
+            // 否则（视口高度不足一行等退化场景）强制推进到下一行
+            if (newTopRect.y <= viewTop) {
+                newTop = findNextLineStartAfter(newTop, totalLen);
+                if (newTop >= totalLen) return -1;
             }
 
             scrollToPosition(newTop);
