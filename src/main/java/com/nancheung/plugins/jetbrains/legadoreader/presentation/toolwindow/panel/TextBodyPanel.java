@@ -290,6 +290,51 @@ public class TextBodyPanel extends JBPanel<TextBodyPanel> {
     }
 
     /**
+     * 相位对齐滚动：将 newTop 行滚动为新一页首行，并令视口底部落在行间隙内
+     * （或行文字底部），使每页恰好装下整数行完整文字。
+     * <p>
+     * 相位修正量 s = min((视口高 - 行文字高) mod 行距, 行间隙)，其中：
+     * 行距 = 相邻两行文字顶的像素差（含行间隙，由布局实测）、
+     * 行文字高 = 行矩形高度（modelToView2D 不含行间隙）。新视口顶部 = 目标行文字顶 - s。
+     * 相位差直接取 mod 余数会把新视口顶部切进上一行（已读行）的文字，故必须再
+     * 收敛进行间隙内；行间隙容不下相位差时（视口高度与行距极端错位）s 收敛为
+     * 行间隙宽，页底最多残留少量截断，截断行照常由下一页承接完整显示。
+     *
+     * @param newTop     新一页首行的行首字符偏移
+     * @param viewHeight 视口高度
+     * @param viewTop    当前视口顶部 y 坐标（行高不均匀等异常布局下保证视口必然向下推进）
+     */
+    private void scrollToPageTop(int newTop, int viewHeight, int viewTop) {
+        JViewport viewport = textScrollPane.getViewport();
+        // 确保 viewSize 反映文本实际渲染高度，避免 setViewPosition 被 clamp 到错误范围
+        ensureViewSizeAccurate(viewport);
+        try {
+            int totalLen = textBodyPane.getDocument().getLength();
+            Rectangle topRect = textBodyPane.modelToView2D(newTop).getBounds();
+            if (topRect == null) {
+                // 无法定位目标行，退化为行首对齐滚动
+                scrollToPosition(newTop);
+                return;
+            }
+
+            // 布局实测行文字高（矩形高度，不含行间隙）与行距（相邻行文字顶之差）
+            int lineTextHeight = topRect.height;
+            int linePitch = measureLinePitch(newTop, totalLen, topRect);
+
+            // 相位修正量：(视口高 - 行文字高) mod 行距，再收敛进行间隙内
+            int phase = Math.max(0, viewHeight - lineTextHeight) % linePitch;
+            phase = Math.min(phase, Math.max(0, linePitch - lineTextHeight));
+
+            // 新视口顶部 = 目标行文字顶 - 相位修正量；防御性下限保证视口向下推进
+            int y = Math.max(topRect.y - phase, viewTop + 1);
+            viewport.setViewPosition(new Point(0, y));
+        } catch (BadLocationException e) {
+            // 度量失败，退化为行首对齐滚动
+            scrollToPosition(newTop);
+        }
+    }
+
+    /**
      * 向下翻一页（按视口高度逐行计算）
      * <p>
      * 新视口顶部 = 当前视口底部第一行"文字未完整显示"的行首，判定规则（减去行间隙）：
@@ -301,6 +346,13 @@ public class TextBodyPanel extends JBPanel<TextBodyPanel> {
      *       文字已完整显示，该行可以翻过去，新视口从下一行开始（零重叠）。</li>
      * </ul>
      * 保证至少推进一行，避免原地不动
+     * <p>
+     * 相位对齐：视口高度通常不是行距的整数倍，若每页都从行首对齐滚动，视口底部
+     * 会把某行文字拦腰截断成残行（如只显示 20%），该行整行带到下一页顶部重看。
+     * 滚动时应用相位修正量 s = min((视口高 - 行文字高) mod 行距, 行间隙)
+     * （行距/文字高由布局实测），新视口顶部 = 目标行文字顶 - s，视口底部
+     * 落在行间隙内，每页装下整数行完整文字；行间隙容不下相位差时（视口与行距
+     * 极端错位）s 收敛为行间隙宽，页底最多残留少量截断，截断行照常由下一页承接。
      *
      * @return 跳转后的行首字符偏移；已到底则返回 -1
      */
@@ -349,7 +401,9 @@ public class TextBodyPanel extends JBPanel<TextBodyPanel> {
                 if (newTop >= totalLen) return -1;
             }
 
-            scrollToPosition(newTop);
+            // 相位对齐滚动：新视口顶部 = newTop 行文字顶 - 相位修正量，
+            // 视口底部落在行间隙内，每页装下整数行完整文字
+            scrollToPageTop(newTop, viewHeight, viewTop);
             setCaretPosition(newTop);
             return newTop;
         } catch (BadLocationException e) {
@@ -492,6 +546,41 @@ public class TextBodyPanel extends JBPanel<TextBodyPanel> {
             return lo;
         } catch (BadLocationException ignored) {}
         return totalLen;
+    }
+
+    /**
+     * 实测行距（相邻两行文字顶的像素差，含行间隙）
+     * <p>
+     * 优先测目标行与下一行文字顶之差；目标行是文档最后一行时，
+     * 回退测上一行与目标行文字顶之差；均不可测时按行距 = 行文字高退化
+     *
+     * @param lineStart 目标行的行首字符偏移
+     * @param totalLen  文档总长度
+     * @param lineRect  目标行的文字矩形
+     * @return 实测行距（至少为 1）
+     */
+    private int measureLinePitch(int lineStart, int totalLen, Rectangle lineRect) {
+        try {
+            int nextLine = findNextLineStartAfter(lineStart, totalLen);
+            if (nextLine < totalLen) {
+                Rectangle nextRect = textBodyPane.modelToView2D(nextLine).getBounds();
+                if (nextRect != null && nextRect.y > lineRect.y) {
+                    return nextRect.y - lineRect.y;
+                }
+            }
+            if (lineStart > 0) {
+                int prevLine = findLineStart(lineStart - 1);
+                if (prevLine < lineStart) {
+                    Rectangle prevRect = textBodyPane.modelToView2D(prevLine).getBounds();
+                    if (prevRect != null && prevRect.y < lineRect.y) {
+                        return lineRect.y - prevRect.y;
+                    }
+                }
+            }
+        } catch (BadLocationException ignored) {
+            // 度量失败走退化逻辑
+        }
+        return Math.max(1, lineRect.height);
     }
 
     // ==================== 样式操作方法 ====================
