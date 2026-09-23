@@ -8,6 +8,8 @@ Legado Reader是 [开源阅读APP](https://github.com/gedoor/legado) 的Jetbrain
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-09-23
+
 ### Added
 
 - :sparkles: feat: 新增老板键（默认快捷键 Shift+Alt+D，未被 IDEA 默认键位及常见应用占用），一键隐藏/恢复行内阅读与阅读窗口
@@ -60,6 +62,7 @@ Legado Reader是 [开源阅读APP](https://github.com/gedoor/legado) 的Jetbrain
 - refactor: 重构数据层 (fd214fb)
 - refactor: 彻底移除 CurrentReadData 并改用 ReadingSessionManager (438d047)
 
-[Unreleased]: https://github.com/nancheung/legado-reader/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/nancheung/legado-reader/compare/v1.5.2...HEAD
+[1.5.2]: https://github.com/nancheung/legado-reader/compare/v1.5.1...v1.5.2
 [1.5.1]: https://github.com/nancheung/legado-reader/compare/v1.4.1...v1.5.1
 [1.5.0]: https://github.com/nancheung/legado-reader/commits/v1.5.0
